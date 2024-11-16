@@ -1,0 +1,6 @@
+pip install fastapi uvicorn[standard] numpy pandas yfinance pythainlp transformers requests Pillow pytesseract scikit-learn scipy matplotlib seaborn PyMuPDF
+
+
+
+pip install fastapi uvicorn transformers torch numpy pandas yfinance PyMuPDF Pillow pytesseract pythainlp scikit-learn matplotlib seaborn python-dotenv
+uvicorn main:app --reload
