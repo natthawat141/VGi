@@ -1,23 +1,142 @@
-# services.py
+# main.py
+
+# ----------------- นำเข้าไลบรารีที่จำเป็น -----------------
 
 import os
+import uvicorn
+from fastapi import FastAPI, File, UploadFile, HTTPException, Request
+from fastapi.responses import JSONResponse, HTMLResponse
+from fastapi.templating import Jinja2Templates
 from typing import Optional, Dict, Any, List
 import numpy as np
+
+# ไลบรารีสำหรับการประมวลผลข้อมูลและการวิเคราะห์ทางการเงิน
+import pandas as pd
+import yfinance as yf
+from dataclasses import dataclass
 from datetime import datetime
-import re
+import matplotlib.pyplot as plt
+import warnings
 import requests
+import re
+
+# ไลบรารีสำหรับการจัดการไฟล์ PDF และการ OCR
 import fitz  # PyMuPDF
 import io
 from PIL import Image
 import pytesseract
-from transformers import pipeline
+
+# ไลบรารีสำหรับการประมวลผลภาษาธรรมชาติ (NLP)
+import pythainlp
 from pythainlp.tokenize import word_tokenize
 from pythainlp.util import normalize
-from scipy import stats
-import pandas as pd
+from transformers import pipeline
 
-from models import FinancialData, FinancialMetrics
-from market_data import MarketData
+# ไลบรารีสำหรับการวิเคราะห์สถิติและการสร้างกราฟ
+import seaborn as sns
+from scipy import stats
+
+# ปิดคำเตือนที่ไม่จำเป็น
+warnings.filterwarnings('ignore')
+sns.set(style='whitegrid')
+
+
+from dotenv import load_dotenv
+
+load_dotenv()  # โหลด .env
+api_key = os.getenv('TYPHOON_API_KEY')
+
+
+
+
+# ----------------- กำหนด Data Classes -----------------
+
+@dataclass
+class FinancialMetrics:
+    """
+    คลาสสำหรับเก็บตัวชี้วัดทางการเงินต่าง ๆ
+    """
+    basic_metrics: Dict[str, float]
+    technical_indicators: Dict[str, Any]
+    risk_metrics: Dict[str, float]
+    statistical_metrics: Dict[str, Any]
+
+@dataclass
+class IndustryAnalysis:
+    """
+    คลาสสำหรับเก็บข้อมูลการวิเคราะห์อุตสาหกรรม
+    """
+    industry_type: str
+    key_indicators: List[str]
+    study_topics: List[str]
+    peer_companies: List[str]
+    industry_metrics: Dict[str, float]
+
+@dataclass
+class FinancialData:
+    """
+    คลาสสำหรับเก็บข้อมูลทางการเงินของหุ้น
+    """
+    symbol: str
+    prices: np.ndarray
+    returns: np.ndarray
+    dates: np.ndarray
+    volume: np.ndarray
+    market_cap: float
+    sector: str
+    financial_metrics: Optional[FinancialMetrics] = None
+
+# ----------------- คลาส MarketData -----------------
+
+class MarketData:
+    """
+    คลาสสำหรับดึงข้อมูลตลาดหุ้น
+    """
+    def __init__(self):
+        self.market_index = "^SET.BK"  # ดัชนีตลาดหลักทรัพย์ของไทย
+        self.cache = {}  # แคชสำหรับเก็บข้อมูลหุ้นที่ดึงมาแล้ว
+
+    def get_stock_data(self, symbol: str, period: str = "1y") -> Optional[FinancialData]:
+        """
+        ดึงข้อมูลหุ้นสำหรับสัญลักษณ์ที่ระบุและช่วงเวลา
+        """
+        print(f"\nดึงข้อมูลหุ้นสำหรับ {symbol}")
+        try:
+            # ตรวจสอบว่ามีข้อมูลในแคชหรือไม่
+            if symbol in self.cache:
+                print(f"ใช้ข้อมูลที่แคชไว้สำหรับ {symbol}")
+                return self.cache[symbol]
+
+            # ดึงข้อมูลหุ้นจาก yfinance
+            stock = yf.Ticker(symbol)
+            hist = stock.history(period=period)
+
+            # ตรวจสอบว่ามีข้อมูลหรือไม่
+            if hist.empty:
+                raise ValueError(f"ไม่พบข้อมูลสำหรับ {symbol}")
+
+            # ดึงข้อมูลเพิ่มเติมเกี่ยวกับหุ้น
+            info = stock.info
+            data = FinancialData(
+                symbol=symbol,
+                prices=hist['Close'].values,
+                returns=hist['Close'].pct_change().dropna().values,
+                dates=hist.index.values,
+                volume=hist['Volume'].values,
+                market_cap=info.get('marketCap', 0),
+                sector=info.get('sector', 'Unknown')
+            )
+
+            # เก็บข้อมูลในแคช
+            self.cache[symbol] = data
+            print(f"ดึงข้อมูลสำเร็จสำหรับ {symbol}")
+            return data
+
+        except Exception as e:
+            print(f"Error fetching data for {symbol}: {e}")
+            return None
+
+# ----------------- คลาส AdvancedFinancialAnalyzer -----------------
 
 class AdvancedFinancialAnalyzer:
     """
@@ -404,61 +523,26 @@ class AdvancedFinancialAnalyzer:
             print(f"API call error: {e}")
             return None
 
-    def generate_investment_report(self, file_path: str) -> Dict[str, Any]:
+    def analyze(self, action: str, params: Dict[str, Any]) -> Any:
         """
-        สร้างรายงานการลงทุนแบบครบถ้วนจากไฟล์ PDF
+        ฟังก์ชันหลักสำหรับเรียกใช้ฟังก์ชันต่าง ๆ ตาม action ที่ระบุ
         """
-        text = self.extract_text_from_pdf(file_path)
-        if not text:
-            print("ไม่สามารถวิเคราะห์เอกสารได้")
-            return {"error": "ไม่สามารถวิเคราะห์เอกสารได้"}
-
-        try:
-            industry, analysis = self.analyze_company(text)
-            result = self._prepare_results(industry, analysis)
-            return result
-        except Exception as e:
-            print(f"เกิดข้อผิดพลาดในการวิเคราะห์: {e}")
-            return {"error": str(e)}
-
-    def _prepare_results(self, industry: str, analysis: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        เตรียมผลลัพธ์สำหรับส่งกลับไปยังผู้ใช้
-        """
-        symbol = analysis.get('symbol', 'N/A')
-        financial_metrics = analysis.get('financial_metrics', None)
-        industry_analysis = analysis.get('industry_analysis', {})
-        ai_recommendations = analysis.get('ai_recommendations', {})
-        stock_data = analysis.get('stock_data', None)
-
-        result = {
-            "symbol": symbol,
-            "industry": industry,
-            "ai_recommendations": ai_recommendations.get('summary', 'ไม่มีคำแนะนำ'),
-            "study_topics": industry_analysis.get('study_topics', []),
-            "peer_companies": industry_analysis.get('peer_companies', []),
-            "financial_metrics": financial_metrics,
-            "stock_data": {
-                "prices": stock_data.prices.tolist() if stock_data else [],
-                "dates": stock_data.dates.tolist() if stock_data else [],
-            }
-        }
-        return result
-
-    def chat_with_typhoon(self, message: str) -> str:
-        """
-        ส่งข้อความไปยัง Typhoon API และรับคำตอบ
-        """
-        if not self.api_key:
-            return "ไม่สามารถเชื่อมต่อกับ Typhoon API ได้เนื่องจากไม่ได้ตั้งค่า API Key"
-
-        prompt = message
-        response = self._call_typhoon_api(prompt)
-        if response:
-            answer = response['choices'][0]['message']['content']
-            return answer
+        if action == 'extract_text_from_pdf':
+            file_path = params.get('file_path')
+            return self.extract_text_from_pdf(file_path)
+        elif action == 'find_stock_symbol':
+            text = params.get('text')
+            return self.find_stock_symbol(text)
+        elif action == 'analyze_company':
+            text = params.get('text')
+            return self.analyze_company(text)
+        elif action == 'calculate_rsi':
+            prices = params.get('prices')
+            period = params.get('period', 14)
+            return self._calculate_rsi(np.array(prices), period)
+        # เพิ่มเงื่อนไขสำหรับฟังก์ชันอื่น ๆ ตามต้องการ
         else:
-            return "ไม่สามารถรับคำตอบจาก Typhoon API ได้"
+            raise ValueError(f"ไม่พบ action '{action}'")
 
     # ----------------- ฟังก์ชัน Helper และฟังก์ชันเพิ่มเติม -----------------
 
@@ -592,8 +676,96 @@ class AdvancedFinancialAnalyzer:
         }
         return topics.get(industry, ['ศึกษาภาพรวมของอุตสาหกรรมเพิ่มเติม'])
 
+    # ฟังก์ชันอื่น ๆ คุณควรเพิ่มเข้ามาตามที่มีในโค้ดเดิมของคุณ
+
+# ----------------- สร้างแอป FastAPI -----------------
+
+app = FastAPI()
+
+
+from fastapi.middleware.cors import CORSMiddleware
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # หรือระบุ domain ที่อนุญาต
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 
+# กำหนดเส้นทางไปยังโฟลเดอร์ templates สำหรับ Jinja2 Templates
+templates = Jinja2Templates(directory="templates")
 
+# สร้างอินสแตนซ์ของคลาส
+api_key = os.getenv('TYPHOON_API_KEY', None)
+if not api_key:
+    print("หมายเหตุ: คุณไม่ได้ตั้งค่า Typhoon API Key ผลลัพธ์บางส่วนอาจไม่ทำงาน")
+analyzer = AdvancedFinancialAnalyzer(api_key=api_key)
 
+# ----------------- Endpoint หลัก /analyze -----------------
+
+@app.post("/analyze")
+async def analyze_endpoint(request: Request, file: UploadFile = File(None)):
+    """
+    Endpoint หลักสำหรับรับคำขอและเรียกใช้ฟังก์ชันตาม action ที่ระบุ
+    """
+    # ตรวจสอบว่าเป็นคำขอแบบ multipart/form-data หรือไม่
+    if request.headers.get('content-type', '').startswith('multipart/form-data'):
+        form = await request.form()
+        action = form.get('action')
+        params = {}
+        # ถ้ามีไฟล์ ให้บันทึกไฟล์ชั่วคราว
+        if file:
+            contents = await file.read()
+            temp_file_path = f"temp_{file.filename}"
+            with open(temp_file_path, 'wb') as f:
+                f.write(contents)
+            params['file_path'] = temp_file_path
+        # รับพารามิเตอร์อื่น ๆ จากฟอร์ม
+        for key in form.keys():
+            if key != 'action' and key != 'file':
+                params[key] = form.get(key)
+    else:
+        # รับคำขอแบบ JSON
+        data = await request.json()
+        action = data.get('action')
+        params = data.get('params', {})
+
+    # เรียกใช้ฟังก์ชัน analyze
+    try:
+        result = analyzer.analyze(action, params)
+        # ลบไฟล์ชั่วคราวถ้ามี
+        if 'file_path' in params and os.path.exists(params['file_path']):
+            os.remove(params['file_path'])
+        return {"result": result}
+    except Exception as e:
+        # ลบไฟล์ชั่วคราวถ้ามี
+        if 'file_path' in params and os.path.exists(params['file_path']):
+            os.remove(params['file_path'])
+        raise HTTPException(status_code=400, detail=str(e))
+
+# ----------------- Endpoint สำหรับหน้าเว็บหลัก -----------------
+
+@app.get("/")
+def read_root(request: Request):
+    """
+    แสดงหน้าเว็บหลักสำหรับการทดสอบการใช้งาน
+    """
+    return templates.TemplateResponse("index.html", {"request": request})
+
+# ----------------- รันแอปพลิเคชัน -----------------
+
+if __name__ == "__main__":
+    # เพิ่ม workers และปรับ timeout
+    uvicorn.run(
+        "main:app", 
+        host="0.0.0.0", 
+        port=8000,
+        workers=40,  # เพิ่มจำนวน workers
+        timeout_keep_alive=120,
+        reload=True  # ใช้สำหรับ development
+    )
+
+    

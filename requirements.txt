@@ -1,5 +1,5 @@
 fastapi
-uvicorn
+uvicorn[standard]
 matplotlib
 numpy
 pandas
@@ -19,3 +19,6 @@ torchvision
 protobuf
 tiktoken
 sentencepiece
+python-multipart
+scikit-learn
+python-dotenv
