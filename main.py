@@ -12,21 +12,27 @@ from fastapi.middleware.cors import CORSMiddleware
 
 
 # โหลดตัวแปรสภาพแวดล้อม
+# โหลดตัวแปรสภาพแวดล้อม
 load_dotenv()
 typhoon_api_key = os.getenv('TYPHOON_API_KEY')
+together_api_key = os.getenv('TOGETHER_API_KEY')
 setsmart_api_key = os.getenv('SETSMART_API_KEY')
 
 # Debugging: แสดง API Key ที่โหลดได้
 print(f"TYPHOON_API_KEY: {typhoon_api_key}")
+print(f"TOGETHER_API_KEY: {together_api_key}")
 print(f"SETSMART_API_KEY: {setsmart_api_key}")
 
 # ตรวจสอบว่า API Key ถูกต้องหรือไม่
-if not typhoon_api_key or not setsmart_api_key:
-    raise Exception("API Key สำหรับ Typhoon หรือ SETSMART ยังไม่ได้ตั้งค่าในไฟล์ .env")
+if not typhoon_api_key or not together_api_key or not setsmart_api_key:
+    raise Exception("API Key สำหรับ Typhoon, Together หรือ SETSMART ยังไม่ได้ตั้งค่าในไฟล์ .env")
 
 # สร้าง instance ของ SetSmartAnalyzer และ AdvancedFinancialAnalyzer
 smart_analyzer = SetSmartAnalyzer(api_key=setsmart_api_key)
-analyzer = AdvancedFinancialAnalyzer(api_key=typhoon_api_key)
+analyzer = AdvancedFinancialAnalyzer(
+    api_key=typhoon_api_key, 
+    together_api_key=together_api_key
+)
 
 # ----------------- กำหนดค่าและสร้างแอป FastAPI -----------------
 

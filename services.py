@@ -16,15 +16,26 @@ from pythainlp.util import normalize
 from scipy import stats
 import pandas as pd
 
+from together import Together  # เพิ่มบรรทัดนี้ที่ด้านบนของไฟล์ services.py
+
 from models import FinancialData, FinancialMetrics
 from market_data import MarketData
+
+# หากคุณใช้ Together API ต้องนำเข้าคลาส Together
+# from together import Together
 
 class AdvancedFinancialAnalyzer:
     """
     คลาสหลักสำหรับการวิเคราะห์ทางการเงินขั้นสูง
     """
-    def __init__(self, api_key: Optional[str] = None):
-        self.api_key = api_key  # API Key สำหรับ Typhoon API
+    def __init__(self, api_key: Optional[str] = None, together_api_key: Optional[str] = None):
+        self.api_key = api_key  # Typhoon API key
+        self.together_api_key = together_api_key  # Together API key
+        # ตรวจสอบว่าได้ตั้งค่า Together API หรือไม่
+        if together_api_key:
+            self.together_client = Together(api_key=together_api_key)
+        else:
+            self.together_client = None
         print("กำลังโหลดโมเดลจำแนกประเภท...")
 
         # โหลดโมเดลสำหรับการจำแนกประเภทด้วย Zero-Shot Classification
@@ -81,43 +92,18 @@ class AdvancedFinancialAnalyzer:
         print("ทำความสะอาดข้อความสำเร็จ")
         return text.strip()
 
-    def find_stock_symbol(self, text: str) -> Optional[str]:
-        """
-        ค้นหาสัญลักษณ์หุ้นจากข้อความโดยใช้ Typhoon API
-        """
-        print("\nกำลังค้นหาสัญลักษณ์หุ้นจากข้อความ...")
-        if not self.api_key:
-            print("ไม่สามารถค้นหาสัญลักษณ์หุ้นได้เนื่องจากไม่ได้ตั้งค่า Typhoon API Key")
-            return None
-
-        # สร้าง prompt สำหรับส่งไปยัง Typhoon API
-        prompt = f"จากข้อความต่อไปนี้ คุณทราบสัญลักษณ์หุ้นของบริษัทนี้ใน yfinance หรือไม่:\n\n{text[:2000]}"
-        response = self._call_typhoon_api(prompt)
-        if response:
-            # ดึงคำตอบจาก API
-            answer = response['choices'][0]['message']['content']
-            print(f"\nคำตอบจาก Typhoon API:\n{answer}")
-            # ใช้ Regular Expression เพื่อค้นหาสัญลักษณ์หุ้น
-            symbol_match = re.search(r'สัญลักษณ์หุ้น.*?คือ\s*"?([A-Z]{1,5}(?:\.BK)?)"?', answer)
-            if symbol_match:
-                symbol = symbol_match.group(1)
-                # เพิ่ม ".BK" หากเป็นหุ้นไทยและไม่มีนามสกุล
-                if '.BK' not in symbol and symbol.isupper():
-                    symbol += '.BK'
-                print(f"\nพบสัญลักษณ์หุ้น: {symbol}")
-                return symbol
-            else:
-                print("ไม่สามารถดึงสัญลักษณ์หุ้นจากคำตอบของ Typhoon")
-                return None
-        else:
-            return None
-
     def analyze_company(self, text: str) -> (str, Dict[str, Any]):
         """
         วิเคราะห์บริษัทอย่างครบถ้วนจากข้อความที่ให้มา
         """
-        # ค้นหาสัญลักษณ์หุ้น
-        symbol = self.find_stock_symbol(text)
+        # สรุปข้อความก่อนด้วย Typhoon API
+        summary = self._summarize_with_typhoon(text)
+        if not summary:
+            print("ไม่สามารถสรุปข้อความได้")
+            summary = text[:2000]  # ใช้ข้อความเดิมถ้าสรุปไม่ได้
+
+        # ค้นหาสัญลักษณ์หุ้นจากข้อความสรุป
+        symbol = self.find_stock_symbol(summary)
         if not symbol:
             print("ไม่สามารถระบุสัญลักษณ์หุ้นได้")
             stock_data = None
@@ -127,11 +113,10 @@ class AdvancedFinancialAnalyzer:
             if stock_data is None:
                 print(f"ไม่สามารถดึงข้อมูลหุ้น {symbol} ได้")
 
-        # จำแนกประเภทธุรกิจ
+        # จำแนกประเภทธุรกิจจากข้อความเต็ม
         industry = self._classify_industry(text)
 
         print(f"\nบริษัทนี้อยู่ในอุตสาหกรรม: {industry}")
-        print("คุณควรศึกษาปัจจัยเฉพาะของอุตสาหกรรมนี้เพิ่มเติมเพื่อการตัดสินใจลงทุน")
 
         # คำนวณตัวชี้วัดทางการเงินถ้ามีข้อมูลหุ้น
         if stock_data:
@@ -153,6 +138,93 @@ class AdvancedFinancialAnalyzer:
             'stock_data': stock_data
         }
 
+    def find_stock_symbol(self, summary: str) -> Optional[str]:
+        """
+        ค้นหาสัญลักษณ์หุ้นจากข้อความสรุป
+        """
+        print("\nกำลังค้นหาสัญลักษณ์หุ้นจากข้อความสรุป...")
+        print("\nข้อความที่ใช้ค้นหา:")
+        print("=" * 50)
+        print(summary)  # แสดงข้อความที่ใช้ค้นหา
+        print("=" * 50)
+
+        # ค้นหาจากคำสำคัญก่อน
+        company_symbols = {
+            "KASIKORNBANK": "KBANK.BK",
+            "KBank": "KBANK.BK",
+            "ธนาคารกสิกรไทย": "KBANK.BK",
+            # เพิ่มคำสำคัญอื่นๆ
+        }
+
+        print("\nกำลังค้นหาจากคำสำคัญที่กำหนดไว้...")
+        for company, symbol in company_symbols.items():
+            if company in summary:
+                print(f"พบคำสำคัญ '{company}' -> symbol {symbol}")
+                return symbol
+
+        if not self.together_api_key or not self.together_client:
+            print("ไม่ได้ตั้งค่า Together API Key")
+            return None
+
+        # สร้าง prompt สำหรับ Together API
+        prompt = """กรุณาระบุ stock symbol ของบริษัทในรูปแบบ XXXX.BK เท่านั้น
+เช่น: 
+- KBANK.BK สำหรับธนาคารกสิกรไทย
+- SCB.BK สำหรับธนาคารไทยพาณิชย์
+
+คำถาม: จากข้อความต่อไปนี้ บริษัทนี้คือ stock symbol อะไรใน library yahoo finance
+
+ข้อความ:
+{summary}
+
+รูปแบบคำตอบ:
+สัญลัก หุ้น: [KBANK.BK]"""
+
+        print("\nPrompt ที่ส่งให้ Together API:")
+        print("=" * 50)
+        formatted_prompt = prompt.format(summary=summary)
+        print(formatted_prompt)
+        print("=" * 50)
+
+        try:
+            print("\nกำลังเรียกใช้ Together API...")
+            response = self.together_client.chat.completions.create(
+                model="scb10x/scb10x-llama3-typhoon-v1-5x-4f316",
+                messages=[{
+                    "role": "user",
+                    "content": formatted_prompt
+                }],
+                max_tokens=512,
+                temperature=0.14,
+                top_p=0.7,
+                top_k=50,
+                repetition_penalty=1,
+                stop=["<|eot_id|>"],
+                stream=True
+            )
+
+            answer = ""
+            for token in response:
+                if hasattr(token, 'choices'):
+                    answer += token.choices[0].delta.content
+
+            print(f"\nคำตอบจาก Together API:\n{answer}")
+
+            # ค้นหารูปแบบ XXXX.BK โดยตรง
+            symbol_match = re.search(r'([A-Z]{1,5}(?:\.BK)?)', answer)
+            if symbol_match:
+                symbol = symbol_match.group(1)
+                # ถ้าไม่มี .BK ให้เพิ่มเข้าไป
+                if not symbol.endswith('.BK'):
+                    symbol = f"{symbol}.BK"
+                print(f"\nพบสัญลักษณ์หุ้น: {symbol}")
+                return symbol
+
+        except Exception as e:
+            print(f"Error calling Together API: {e}")
+
+        return None
+
     def _classify_industry(self, text: str) -> str:
         """
         จำแนกประเภทธุรกิจของบริษัทจากข้อความโดยใช้ Typhoon API และ Zero-Shot Classification
@@ -167,13 +239,16 @@ class AdvancedFinancialAnalyzer:
         # ดึงคำที่เกี่ยวข้องกับอุตสาหกรรมจากข้อความ
         dynamic_labels = self._extract_industries_from_text(summary)
         if not dynamic_labels:
-            dynamic_labels = ['ธนาคาร', 'ก่อสร้าง', 'เทคโนโลยี', 'สุขภาพ', 'พลังงาน', 'อสังหาริมทรัพย์', 'การขนส่ง', 'การสื่อสาร', 'การเกษตร', 'อาหาร', 'การท่องเที่ยว', 'ค้าปลีก', 'การผลิต', 'การเงิน', 'สื่อ', 'บันเทิง', 'เคมีภัณฑ์']
+            dynamic_labels = ['ธนาคาร', 'ก่อสร้าง', 'เทคโนโลยี', 'สุขภาพ', 'พลังงาน', 'อสังหาริมทรัพย์',
+                              'การขนส่ง', 'การสื่อสาร', 'การเกษตร', 'อาหาร', 'การท่องเที่ยว',
+                              'ค้าปลีก', 'การผลิต', 'การเงิน', 'สื่อ', 'บันเทิง', 'เคมีภัณฑ์']
 
         print(f"\nLabels สำหรับการจำแนกประเภท: {dynamic_labels}")
 
         print("\nกำลังจำแนกประเภทอุตสาหกรรม...")
         # ใช้โมเดล Zero-Shot Classification
-        result = self.classifier(summary, candidate_labels=dynamic_labels, hypothesis_template="นี่คือข้อความเกี่ยวกับ {}.")
+        result = self.classifier(summary, candidate_labels=dynamic_labels,
+                                 hypothesis_template="นี่คือข้อความเกี่ยวกับ {}.")
         industry = result['labels'][0]
         print(f"\nประเภทอุตสาหกรรมที่จำแนกได้: {industry}")
         return industry
@@ -591,9 +666,3 @@ class AdvancedFinancialAnalyzer:
             # เพิ่มหัวข้อสำหรับอุตสาหกรรมอื่น ๆ ตามต้องการ
         }
         return topics.get(industry, ['ศึกษาภาพรวมของอุตสาหกรรมเพิ่มเติม'])
-
-
-
-
-
-

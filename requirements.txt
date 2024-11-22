@@ -22,3 +22,4 @@ sentencepiece
 python-multipart
 scikit-learn
 python-dotenv
+together
