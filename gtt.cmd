@@ -15,3 +15,9 @@ git remote add origin https://github.com/natthawat141/VGi.git
 
 
 git branch
+
+git commit -m "your commit message"
+git commit -m "commit stable"
+
+
+git push -u origin stable1
