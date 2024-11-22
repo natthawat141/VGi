@@ -1,5 +1,5 @@
 # set_smart_analyzer.py
-
+from together import Together
 import re
 from typing import List, Dict, Any, Optional
 from datetime import datetime

@@ -1,5 +1,5 @@
 # market_data.py
-
+from together import Together
 import yfinance as yf
 from typing import Optional
 from models import FinancialData

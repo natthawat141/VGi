@@ -6,6 +6,7 @@ from fastapi.templating import Jinja2Templates
 from typing import Optional, Dict, Any
 from dotenv import load_dotenv
 from set_smart_analyzer import SetSmartAnalyzer
+from together import Together
 
 from services import AdvancedFinancialAnalyzer
 from fastapi.middleware.cors import CORSMiddleware
@@ -112,17 +113,41 @@ async def analyze_get_endpoint(request: Request, file_url: str):
 # ----------------- Endpoint สำหรับการแชทกับ Typhoon API -----------------
 
 @app.post("/chat")
-async def chat_with_typhoon(request: Request):
+async def chat_with_together(request: Request):
     """
-    Endpoint สำหรับการแชทกับ Typhoon API
+    Endpoint for chatting with Together API
     """
     data = await request.json()
     message = data.get('message')
     if not message:
-        raise HTTPException(status_code=400, detail="กรุณาส่งข้อความเพื่อแชท")
+        raise HTTPException(status_code=400, detail="Please provide a message")
 
-    response = analyzer.chat_with_typhoon(message)
-    return {"response": response}
+    client = Together()  # Remove api_key parameter
+    try:
+        response = client.chat.completions.create(
+            model="scb10x/scb10x-llama3-typhoon-v1-5x-4f316",
+            messages=[{"role": "user", "content": message}],
+            max_tokens=512,
+            temperature=0.7,
+            top_p=0.7,
+            top_k=50,
+            repetition_penalty=1,
+            stop=["<|eot_id|>"],
+            stream=True
+        )
+        
+        # Handle streaming response
+        full_response = ""
+        for token in response:
+            if hasattr(token, 'choices'):
+                chunk = token.choices[0].delta.content
+                full_response += chunk
+                
+        return {"response": full_response}
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
     
 @app.get("/smart-stocks")
 async def get_smart_stocks():

@@ -1,5 +1,5 @@
 # models.py
-
+from together import Together
 from dataclasses import dataclass
 from typing import Optional, Dict, Any, List
 import numpy as np

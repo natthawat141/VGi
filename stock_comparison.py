@@ -1,4 +1,5 @@
 # stock_comparison.py
+from together import Together
 from typing import List, Dict, Optional
 import yfinance as yf
 import numpy as np
